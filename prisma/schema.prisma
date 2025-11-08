@@ -1,0 +1,170 @@
+// prisma/schema.prisma
+// -----------------------------
+// Generators & datasource
+// -----------------------------
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------
+// Enums
+// -----------------------------
+enum PaymentStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+enum PaymentLinkStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum Currency {
+  USDT
+}
+
+enum Chain {
+  AVAX_FUJI
+  AVAX_MAINNET
+}
+
+// -----------------------------
+// Models (MVP)
+// -----------------------------
+model User {
+  id         String    @id @default(cuid())
+  email      String    @unique
+  name       String?
+  isActive   Boolean   @default(true)
+
+  merchants  Merchant[]
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+model Merchant {
+  id              String     @id @default(cuid())
+  name            String
+  slug            String     @unique
+
+  ownerId         String
+  owner           User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  // Fee plataforma (10% = 1000 bps)
+  platformFeeBps  Int        @default(1000)
+
+  // Primary wallet (1:1)
+  primaryWalletId String?    @unique
+  primaryWallet   Wallet?    @relation("PrimaryWallet", fields: [primaryWalletId], references: [id])
+
+  wallets         Wallet[]
+  paymentLinks    PaymentLink[]
+  payments        Payment[]
+
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+}
+
+model Wallet {
+  id          String    @id @default(cuid())
+  merchantId  String
+  merchant    Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  // lado opuesto de la relación 1:1 con Merchant.primaryWallet
+  primaryOf   Merchant? @relation("PrimaryWallet")
+
+  label       String?
+  address     String
+  chain       Chain     @default(AVAX_FUJI)
+  isActive    Boolean   @default(true)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Para seed con where: { address_chain: { address, chain } }
+  @@unique([address, chain], name: "address_chain")
+  @@index([merchantId])
+}
+
+model PaymentLink {
+  id            String            @id @default(cuid())
+  merchantId    String
+  merchant      Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  code          String            @unique       // usado en /pay/:code
+  title         String?
+  description   String?
+  currency      Currency          @default(USDT)
+  amount        Decimal?          @db.Decimal(38, 18) // null => open amount
+  status        PaymentLinkStatus @default(ACTIVE)
+
+  // lado opuesto: lista de pagos que referencian este link
+  payments      Payment[]
+
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([merchantId])
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  merchantId     String
+  merchant       Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  paymentLinkId  String?
+  paymentLink    PaymentLink?  @relation(fields: [paymentLinkId], references: [id], onDelete: SetNull)
+
+  amount         Decimal       @db.Decimal(38, 18)
+  currency       Currency      @default(USDT)
+  status         PaymentStatus @default(PENDING)
+
+  payerAddress   String?
+  txHash         String?       @unique
+  chain          Chain         @default(AVAX_FUJI)
+
+  // split básico calculado post-confirm (90/10, por ejemplo)
+  merchantShare  Decimal?      @db.Decimal(38, 18)
+  platformShare  Decimal?      @db.Decimal(38, 18)
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  confirmedAt    DateTime?
+
+  events         PaymentEvent[]
+
+  @@index([merchantId, createdAt])
+  @@index([status])
+  @@index([paymentLinkId])
+}
+
+model PaymentEvent {
+  id          String   @id @default(cuid())
+  paymentId   String
+  payment     Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  // e.g. "CHECKOUT_CREATED", "ONCHAIN_CONFIRMED"
+  type        String
+  data        Json
+
+  createdAt   DateTime @default(now())
+
+  @@index([paymentId, createdAt])
+}
+
+// Opcional para auditar callbacks del WDK
+model WebhookLog {
+  id          String   @id @default(cuid())
+  provider    String   // "tether"
+  eventType   String   // "ONCHAIN_CONFIRMED"
+  payload     Json
+  response    String?
+  createdAt   DateTime @default(now())
+}
