@@ -1,15 +1,27 @@
+// src/main.ts
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { PrismaService } from './prisma/prisma.service';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import * as bodyParser from 'body-parser';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
-  // CORS si estás usando subdominios tipo pay/merchant:
-  // app.enableCors({ origin: ['https://pay.mibo.one', 'https://merchant.mibo.one'] });
+  // Raw body SOLO para webhooks (recomendado)
+  app.use('/webhooks/tether', bodyParser.raw({ type: '*/*' }));
 
-  const prismaService = app.get(PrismaService);
-  await prismaService.enableShutdownHooks(app);
+  // Swagger (si ya lo tienes)
+  const config = new DocumentBuilder()
+    .setTitle('MiboPay API')
+    .setDescription('MVP – Avalanche + Tether WDK (hackathon)')
+    .setVersion('0.1.0')
+    .addTag('merchant')
+    .addTag('payment-links')
+    .addTag('payments')
+    .addTag('webhooks')
+    .build();
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('docs', app, document);
 
   await app.listen(3000);
 }
